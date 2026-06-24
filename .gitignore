@@ -1,0 +1,8 @@
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+*.swp
+__pycache__/
+
+# 本地预览配置（个人端口设置，不随仓库分发）
+.claude/
