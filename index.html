@@ -83,6 +83,33 @@
   .crumb b{color:var(--root)}
   #close{position:absolute;top:12px;right:14px;cursor:pointer;color:var(--muted);font-size:22px;line-height:1}
   #close:hover{color:var(--text)}
+  /* 右键菜单 */
+  #ctxmenu{position:absolute;display:none;z-index:50;min-width:172px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 8px 26px rgba(40,30,10,.22);padding:5px;font-size:14px;overflow:hidden}
+  #ctxmenu .ci{padding:8px 12px;border-radius:7px;cursor:pointer;white-space:nowrap;color:var(--text)}
+  #ctxmenu .ci:hover{background:var(--panel2)}
+  #ctxmenu .ci.del{color:var(--root)}
+  #ctxmenu .ct{padding:6px 12px 4px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);margin-bottom:4px;
+    max-width:200px;overflow:hidden;text-overflow:ellipsis}
+  /* 新建节点弹窗 */
+  #modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(30,24,12,.32);z-index:60}
+  #modal.show{display:flex}
+  .mbox{width:360px;max-width:90vw;background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.28)}
+  .mbox .mt{font-size:17px;font-weight:700;margin-bottom:4px}
+  .mbox .ms{font-size:13px;color:var(--muted);margin-bottom:14px}
+  .mbox label{display:block;font-size:12.5px;color:var(--muted);margin:10px 0 4px;font-weight:600}
+  .mbox input{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;
+    background:var(--panel2);color:var(--text);font-size:14.5px;outline:none}
+  .mbox input:focus{border-color:var(--accent);background:#fff}
+  .mbtns{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+  .mbtns button{padding:8px 16px;border-radius:9px;border:1px solid var(--line);cursor:pointer;font-size:14px}
+  .mbtns .ok{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+  .mbtns .ok:hover{filter:brightness(1.08)}
+  .mbtns .cancel{background:var(--panel);color:var(--text)}
+  .mbtns .cancel:hover{background:var(--panel2)}
 </style>
 </head>
 <body>
@@ -109,18 +136,50 @@
       <span class="dot" style="background:var(--word)"></span>派生词
       <span class="dot" style="background:var(--g0)"></span>选中
       <span class="dot" style="background:var(--anc)"></span>上游父链
-      <br><span style="opacity:.8">子代按层级渐变着色 · 滚轮缩放 · 拖动平移 · 点空白返回全局</span>
+      <br><span style="opacity:.8">子代按层级渐变着色 · 滚轮缩放 · 拖动平移 · 「全局视图」键返回总览</span>
     </div>
     <div id="detail">
       <span id="close">×</span>
       <div class="dhead"><div class="w" id="dw"></div><div class="mean" id="dm"></div></div>
       <div class="dbody" id="db"></div>
     </div>
+    <div id="ctxmenu"></div>
   </div>
 </div>
+<div id="modal"><div class="mbox">
+  <div class="mt" id="mt"></div><div class="ms" id="msub"></div>
+  <label>拼写（法语）</label><input id="mlabel" autocomplete="off" placeholder="如 agronomie">
+  <label>释义（可含词性，如 n.f 农学）</label><input id="mmean" autocomplete="off" placeholder="如 n.f 农学">
+  <div class="mbtns"><button class="cancel" id="mcancel">取消</button><button class="ok" id="mok">新建</button></div>
+</div></div>
 <script src="graph-data.js"></script>
 <script>
 const G = window.GRAPH;
+// 本地持久化: 新增节点 / 原始节点编辑覆盖 / 原始节点删除隐藏. 须在派生结构构建之前合并
+const USER_KEY='fwr_user_v1';
+let editsMap={};            // id -> {label, meaning}  (原始节点的修改覆盖)
+let deletedSet=new Set();   // 被删除隐藏的原始节点 id
+function loadUserData(){
+  try{ const raw=localStorage.getItem(USER_KEY); if(!raw)return;
+    let store=JSON.parse(raw);
+    if(Array.isArray(store)) store={added:store};       // 兼容旧格式
+    deletedSet=new Set(store.deleted||[]);
+    editsMap=store.edits||{};
+    if(deletedSet.size){ G.nodes=G.nodes.filter(n=>!deletedSet.has(n.id));
+      G.links=G.links.filter(l=>!deletedSet.has(l.source)&&!deletedSet.has(l.target)); }
+    (store.added||[]).forEach(u=>{ G.nodes.push(u.node);
+      if(u.parent && !deletedSet.has(u.parent)) G.links.push({source:u.parent,target:u.node.id,kind:'derive'}); });
+    G.nodes.forEach(n=>{ const e=editsMap[n.id]; if(e){
+      if(e.label!=null)n.label=e.label;
+      if(e.meaning!=null){n.meaning=e.meaning; n.pos=jsPos(e.meaning);}
+      n.letter=jsLetter(n.label); } });
+  }catch(e){ console.warn('用户数据读取失败',e); }
+}
+function saveUserData(){
+  try{ const added=G.nodes.filter(n=>n.user).map(n=>({node:n,parent:parentOf[n.id]||null}));
+    localStorage.setItem(USER_KEY, JSON.stringify({added, edits:editsMap, deleted:[...deletedSet]})); }catch(e){}
+}
+loadUserData();
 const byId = {}; G.nodes.forEach(n=>byId[n.id]=n);
 const childrenOf = {}; const parentOf = {};
 G.links.forEach(l=>{ (childrenOf[l.source]=childrenOf[l.source]||[]).push(l.target); parentOf[l.target]=l.source; });
@@ -438,7 +497,7 @@ window.addEventListener('mousemove',e=>{
 });
 window.addEventListener('mouseup',()=>{
   if(dragNode&&!moved) selectNode(dragNode.ref.id);
-  else if(panning&&!moved && mode!=='overview') clearSel();
+  else if(panning&&!moved) detail.classList.remove('show'); // 点空白仅关闭卡片, 不退回总览
   dragNode=null;panning=false;cv.style.cursor='grab';
 });
 cv.addEventListener('wheel',e=>{e.preventDefault();
@@ -446,11 +505,149 @@ cv.addEventListener('wheel',e=>{e.preventDefault();
   view.k=Math.max(0.04,Math.min(4,view.k*f)); view.x=mx-wxp*view.k; view.y=my-wyp*view.k; if(!raf)draw();
 },{passive:false});
 
+// ---------- 右键新建节点 ----------
+function jsPos(m){const x=(m||'').match(/^(n\.?\s?[fme]|adj|adv|v|prep|pron|conj|interj)\b/i);return x?x[0].trim():'';}
+function jsLetter(s){for(const ch of s){if(/[a-z]/i.test(ch))return ch.toUpperCase();}
+  const map={'à':'A','â':'A','é':'E','è':'E','ê':'E','î':'I','ï':'I','ô':'O','û':'U','ù':'U','ç':'C'};
+  for(const ch of (s||'').toLowerCase()){if(map[ch])return map[ch];} return '#';}
+
+const ctx2=document.getElementById('ctxmenu');
+function hideCtx(){ ctx2.style.display='none'; }
+cv.addEventListener('contextmenu',e=>{
+  e.preventDefault();
+  const mx=e.offsetX,my=e.offsetY, o=pick(mx,my);
+  let html='';
+  if(o){ const r=o.ref;
+    html+=`<div class="ct">${esc(r.label)}${r.type==='affix'?'（词缀）':r.type==='root'?'（词根）':''}</div>`;
+    if(r.type!=='affix') html+=`<div class="ci" data-act="child">➕ 在此下新增派生词</div>`;
+    html+=`<div class="ci" data-act="edit">✏️ 修改此节点</div>`;
+    html+=`<div class="ci del" data-act="del">🗑 删除此节点</div>`;
+  } else {
+    html+=`<div class="ct">空白处</div><div class="ci" data-act="root">➕ 新建词根（孤立节点）</div>`;
+  }
+  ctx2.innerHTML=html;
+  ctx2.style.display='block';
+  ctx2.style.left=Math.min(mx,W-ctx2.offsetWidth-6)+'px';
+  ctx2.style.top=Math.min(my,H-ctx2.offsetHeight-6)+'px';
+  ctx2._target=o?o.ref:null;
+});
+ctx2.addEventListener('click',e=>{
+  const it=e.target.closest('.ci'); if(!it||!it.dataset.act)return;
+  const act=it.dataset.act, t=ctx2._target; hideCtx();
+  if(act==='child') openModal('child',t);
+  else if(act==='root') openModal('rootIsolated',null);
+  else if(act==='edit') openModal('edit',t);
+  else if(act==='del') deleteNode(t);
+});
+window.addEventListener('click',hideCtx);
+window.addEventListener('blur',hideCtx);
+
+// 弹窗
+const modal=document.getElementById('modal');
+let modalCtx=null;
+function openModal(kind,ref){
+  modalCtx={kind,ref};
+  const mt=document.getElementById('mt'), msub=document.getElementById('msub'),
+        ml=document.getElementById('mlabel'), mm=document.getElementById('mmean');
+  if(kind==='edit'){
+    mt.textContent='修改节点';
+    msub.textContent=(ref.type==='affix'?'词缀':ref.type==='root'?'词根':'单词')+' · 修改拼写与释义';
+    ml.value=ref.label; mm.value=ref.meaning||'';
+    document.getElementById('mok').textContent='保存';
+  } else {
+    mt.textContent = kind==='rootIsolated'?'新建词根':'新增派生词';
+    msub.textContent = kind==='rootIsolated'
+      ? '将作为一个独立的新词根节点加入图谱'
+      : '派生自「'+ref.label+'」，作为其下一级派生词';
+    ml.value=''; mm.value='';
+    document.getElementById('mok').textContent='新建';
+  }
+  modal.classList.add('show');
+  setTimeout(()=>ml.focus(),30);
+}
+function closeModal(){ modal.classList.remove('show'); modalCtx=null; }
+document.getElementById('mcancel').onclick=closeModal;
+modal.addEventListener('click',e=>{ if(e.target===modal) closeModal(); });
+document.getElementById('mok').onclick=submitModal;
+document.getElementById('mmean').addEventListener('keydown',e=>{ if(e.key==='Enter')submitModal(); });
+document.getElementById('mlabel').addEventListener('keydown',e=>{ if(e.key==='Enter')document.getElementById('mmean').focus(); });
+function submitModal(){
+  if(!modalCtx)return;
+  const label=document.getElementById('mlabel').value.trim();
+  const meaning=document.getElementById('mmean').value.trim();
+  if(!label){ document.getElementById('mlabel').focus(); return; }
+  if(modalCtx.kind==='edit') editNode(modalCtx.ref, label, meaning);
+  else createNode(modalCtx.kind, modalCtx.ref, label, meaning);
+  closeModal();
+}
+function editNode(ref,label,meaning){
+  ref.label=label; ref.meaning=meaning; ref.pos=jsPos(meaning); ref.letter=jsLetter(label);
+  if(!ref.user) editsMap[ref.id]={label,meaning};   // 原始节点存为覆盖
+  if(ref.type==='root') roots.sort((a,b)=>a.label.localeCompare(b.label));
+  saveUserData();
+  if(curTab==='roots')renderRoots(); else renderAffix();
+  if(selId===ref.id){ ref.type==='affix'?showAffix(ref):showDetail(ref.id); }
+  reheat(0.15); draw();
+}
+
+function createNode(kind,parentRef,label,meaning){
+  const isRoot = kind==='rootIsolated';
+  const id='user::'+label+'::'+Date.now();
+  const node={ id, label, meaning, pos:jsPos(meaning), type:isRoot?'root':'word',
+    letter:jsLetter(label), user:true,
+    rootId: isRoot?id:(parentRef.rootId||parentRef.id) };
+  if(isRoot) node.rootKind='simple';
+  byId[id]=node; G.nodes.push(node); childrenOf[id]=[];
+  if(!isRoot){ parentOf[id]=parentRef.id; (childrenOf[parentRef.id]=childrenOf[parentRef.id]||[]).push(id);
+    G.links.push({source:parentRef.id,target:id,kind:'derive'}); }
+  (wordsByRoot[node.rootId]=wordsByRoot[node.rootId]||[]).push(node);
+  if(isRoot){ roots.push(node); roots.sort((a,b)=>a.label.localeCompare(b.label)); if(curTab==='roots')renderRoots(); }
+  saveUserData();
+  // 即时加入当前视图
+  if(isRoot){
+    if(mode==='overview') addSimNode(node,null);
+    else focusRoot(id,id);
+  } else {
+    if(mode==='focus' && nodeOf[parentRef.id]){ addSimNode(node,parentRef.id); selectNode(id); }
+    else focusRoot(node.rootId, id);
+  }
+}
+function addSimNode(ref,parentId){
+  const o=mkNode(ref,30);
+  if(parentId&&nodeOf[parentId]){ o.x=nodeOf[parentId].x+(Math.random()-.5)*40; o.y=nodeOf[parentId].y+55; }
+  nodes.push(o); nodeOf[ref.id]=o; if(!adj[ref.id])adj[ref.id]=[];
+  if(parentId&&nodeOf[parentId]){ links.push({s:nodeOf[parentId],t:o});
+    adj[parentId].push(ref.id); adj[ref.id].push(parentId); }
+  reheat(0.9);
+}
+function deleteNode(ref){
+  if(!ref)return;
+  // 收集该节点及其所有后代(级联删除)
+  const ids=[]; (function collect(id){ ids.push(id); (childrenOf[id]||[]).forEach(collect); })(ref.id);
+  if(!confirm(`删除「${ref.label}」${ids.length>1?` 及其 ${ids.length-1} 个派生词`:''}？此操作仅影响本地视图。`)) return;
+  const origParent=parentOf[ref.id], idset=new Set(ids);
+  ids.forEach(id=>{ const node=byId[id];
+    if(node && !node.user) deletedSet.add(id);   // 原始节点 → 记入隐藏列表
+    const p=parentOf[id]; if(p&&childrenOf[p]) childrenOf[p]=childrenOf[p].filter(x=>x!==id);
+    if(node && node.rootId && wordsByRoot[node.rootId]) wordsByRoot[node.rootId]=wordsByRoot[node.rootId].filter(x=>x.id!==id);
+    delete parentOf[id]; delete byId[id]; delete childrenOf[id]; delete editsMap[id]; delete nodeOf[id];
+  });
+  G.nodes=G.nodes.filter(x=>!idset.has(x.id));
+  G.links=G.links.filter(l=>!idset.has(l.source)&&!idset.has(l.target));
+  for(let i=roots.length-1;i>=0;i--) if(idset.has(roots[i].id)) roots.splice(i,1);
+  nodes=nodes.filter(o=>!idset.has(o.ref.id));
+  links=links.filter(l=>!idset.has(l.s.ref.id)&&!idset.has(l.t.ref.id));
+  if(idset.has(selId)){ selId=origParent||null; detail.classList.remove('show'); }
+  saveUserData();
+  if(curTab==='roots')renderRoots(); else renderAffix();
+  reheat(0.3); draw();
+}
+
 // ---------- init ----------
 resize();
 setTimeout(()=>{ buildOverview();
-  document.getElementById('hint').innerHTML='全局视图：所有词根（红）+ 词缀（橙）<br>点击任意节点或搜索单词，展开其派生家族';
-  const h=document.getElementById('hint'); setTimeout(()=>{h.style.transition='opacity .6s';h.style.opacity='0';},3200);
+  document.getElementById('hint').innerHTML='全局视图：所有词根（红圆）+ 词缀（紫菱）<br>点击节点展开家族 · 右键可新增词根 / 派生词';
+  const h=document.getElementById('hint'); setTimeout(()=>{h.style.transition='opacity .6s';h.style.opacity='0';},3600);
 },30);
 </script>
 </body>
